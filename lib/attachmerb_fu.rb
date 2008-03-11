@@ -72,7 +72,8 @@ module AttachmerbFu # :nodoc:
         attachment_options[:path_prefix]   = attachment_options[:path_prefix][1..-1] if options[:path_prefix][0] == '/'
 
         has_many   :thumbnails, :class_name => attachment_options[:thumbnail_class].to_s, :foreign_key => 'parent_id'
-        belongs_to :parent, :class_name => table.klass.to_s, :foreign_key => 'parent_id'
+        klass_name = AttachmerbFu.orm?(:datamapper) ? table.klass.to_s : self.name
+        belongs_to :parent, :class_name => klass_name, :foreign_key => 'parent_id'
 
         before_update :rename_file
         before_destroy :destroy_thumbnails
@@ -373,13 +374,15 @@ module AttachmerbFu # :nodoc:
 
       # Initializes a new thumbnail with the given suffix.
       def find_or_initialize_thumbnail(file_name_suffix)
-        if respond_to?(:parent_id)
-          args = { :thumbnail => file_name_suffix.to_s, :parent_id => id}
-        else
-          args = { :thumbnail => file_name_suffix.to_s}
+        if orm?(:datamapper)
+          args = { :thumbnail => file_name_suffix.to_s }
+          args[:parent_id] = id if respond_to?(:parent_id)
+          thumbnail_class.first(args) || thumbnail_class.new(args)
+        elsif orm?(:activerecord)
+          respond_to?(:parent_id) ?
+            thumbnail_class.find_or_initialize_by_thumbnail_and_parent_id(file_name_suffix.to_s, id) :
+            thumbnail_class.find_or_initialize_by_thumbnail(file_name_suffix.to_s)
         end
-        
-        thumbnail_class.first(args) || thumbnail_class.new(args)
       end
 
       # Stub for a #process_attachment method in a processor
@@ -397,7 +400,7 @@ module AttachmerbFu # :nodoc:
           save_to_storage
           @temp_paths.clear
           @saved_attachment = nil
-#                callback :after_attachment_saved
+          callback(:after_attachment_saved) if orm?(:activerecord)
         end
       end
 
@@ -413,22 +416,40 @@ module AttachmerbFu # :nodoc:
       # Yanked from ActiveRecord::Callbacks, modified so I can pass args to the callbacks besides self.
       # Only accept blocks, however
       def callback_with_args(method, arg = self)
-        # notify(method)
-        # 
-        # result = nil
-        # callbacks_for(method).each do |callback|
-        #   result = callback.call(self, arg)
-        #   return false if result == false
-        # end
-        # 
-        # return result
+        return true unless orm?(:activerecord)
+        notify(method)
+        
+        result = nil
+        callbacks_for(method).each do |callback|
+          result = callback.call(self, arg)
+          return false if result == false
+        end
+        
+        return result
       end
 
       # Removes the thumbnails for the attachment, if it has any
       def destroy_thumbnails
         self.thumbnails.each { |thumbnail| thumbnail.destroy } if thumbnailable?
       end
+      
+      def orm?(orm)
+        case orm
+          when :datamapper then AttachmerbFu.orm?(orm) && self.is_a?(DataMapper::Base)
+          when :activerecord then AttachmerbFu.orm?(orm) && self.is_a?(ActiveRecord::Base)
+          else false
+        end
+      end
   end
+  
+  def self.orm?(orm)
+    case orm
+      when :datamapper then Object.const_defined?('DataMapper')
+      when :activerecord then Object.const_defined?('ActiveRecord')
+      else false
+    end
+  end
+  
 end
 
     
@@ -436,11 +457,23 @@ end
 if defined?(Merb::Plugins)
 
   # Merb gives you a Merb::Plugins.config hash...feel free to put your stuff in your piece of it
-  Merb::Plugins.config[:attachmerb_fu] = {
-  }
+  Merb::Plugins.config[:attachmerb_fu] = { }
+  Merb::Plugins.config[:attachmerb_fu][:tempfile_path] = AttachmerbFu::tempfile_path
   
-  #Merb::Plugins.add_rakefiles "attachmerb_fu/merbtasks"
+  Merb::Plugins.add_rakefiles "attachmerb_fu/merbtasks"
   
-  DataMapper::Base.send(:extend, AttachmerbFu::ActMethods)
+  if AttachmerbFu.orm?(:datamapper)
+    DataMapper::Base.send(:extend, AttachmerbFu::ActMethods) 
+  elsif AttachmerbFu.orm?(:activerecord)
+    ActiveRecord::Base.send(:extend, AttachmerbFu::ActMethods)
+  end
+  
+  Merb::BootLoader.before_app_loads do
+    tempfile_path = Merb::Plugins.config[:attachmerb_fu][:tempfile_path]
+    unless File.directory?(tempfile_path)
+      FileUtils.mkdir_p(tempfile_path) 
+      Merb.logger.info('created temp filepath for AttachmerbFu')
+    end
+  end
   
 end

@@ -395,7 +395,7 @@ module Technoweenie # :nodoc:
                 save_to_storage
                 @temp_paths.clear
                 @saved_attachment = nil
-#                callback :after_attachment_saved
+                callback :after_attachment_saved
               end
             end
 
@@ -411,15 +411,14 @@ module Technoweenie # :nodoc:
             # Yanked from ActiveRecord::Callbacks, modified so I can pass args to the callbacks besides self.
             # Only accept blocks, however
             def callback_with_args(method, arg = self)
-              # notify(method)
-              # 
-              # result = nil
-              # callbacks_for(method).each do |callback|
-              #   result = callback.call(self, arg)
-              #   return false if result == false
-              # end
-              # 
-              # return result
+              notify(method)
+              
+              result = nil
+              callbacks_for(method).each do |callback|
+                result = callback.call(self, arg)
+                return false if result == false
+              end
+              return result
             end
 
             # Removes the thumbnails for the attachment, if it has any
