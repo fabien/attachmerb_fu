@@ -17,12 +17,12 @@ module AttachmerbFu # :nodoc:
       # The optional thumbnail argument will output the thumbnail's filename.
       def full_filename(thumbnail = nil)
         file_system_path = (thumbnail ? thumbnail_class : self).attachment_options[:path_prefix].to_s
-        File.join(Merb.dir_for(:public), file_system_path, *partitioned_path(thumbnail_name_for(thumbnail)))
+        File.join(base_path, file_system_path, *partitioned_path(thumbnail_name_for(thumbnail)))
       end
     
       # Used as the base path that #public_filename strips off full_filename to create the public path
       def base_path
-        @base_path ||= Merb.dir_for(:public)
+        @base_path ||= self.class.respond_to?(:base_path) ? self.class.base_path : Merb.dir_for(:public)
       end
     
       # The attachment ID used in the full path of a file
@@ -53,7 +53,7 @@ module AttachmerbFu # :nodoc:
       end
 
       protected
-        # Destroys the file.  Called in the after_destroy callback
+        # Destroys the file. Called in the after_destroy callback
         def destroy_file
           FileUtils.rm full_filename
           # remove directory also if it is now empty

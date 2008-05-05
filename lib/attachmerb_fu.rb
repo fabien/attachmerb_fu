@@ -197,6 +197,11 @@ module AttachmerbFu # :nodoc:
   end
 
   module InstanceMethods
+    
+    def self.included(base)
+      base.define_callbacks *[:after_resize, :after_attachment_saved, :before_thumbnail_saved] if base.respond_to?(:define_callbacks)
+    end
+    
     # Checks whether the attachment's content type is an image content type
     def image?
       self.class.image?(content_type)
@@ -331,6 +336,12 @@ module AttachmerbFu # :nodoc:
 
     # Stub for creating a temp file from the attachment data.  This should be defined in the backend module.
     def create_temp_file() end
+      
+    # Gets the actual file path, which can be the temp_path or the full_filename
+    def actual_filename
+      temporary_path = temp_path
+      temporary_path ? temporary_path : full_filename
+    end
 
     # Allows you to work with a processed representation (RMagick, ImageScience, etc) of the attachment in a block.
     #
@@ -339,7 +350,7 @@ module AttachmerbFu # :nodoc:
     #   end
     #
     def with_image(&block)
-      self.class.with_image(temp_path, &block)
+      self.class.with_image(actual_filename, &block)
     end
 
     protected
@@ -415,17 +426,35 @@ module AttachmerbFu # :nodoc:
 
       # Yanked from ActiveRecord::Callbacks, modified so I can pass args to the callbacks besides self.
       # Only accept blocks, however
-      def callback_with_args(method, arg = self)
-        return true unless orm?(:activerecord)
-        notify(method)
-        
-        result = nil
-        callbacks_for(method).each do |callback|
-          result = callback.call(self, arg)
-          return false if result == false
+      if ActiveSupport.const_defined?(:Callbacks)
+        # Rails 2.1 and beyond!
+        def callback_with_args(method, arg = self)
+          return true unless orm?(:activerecord)
+          notify(method)
+
+          result = run_callbacks(method, :object => arg) { |result, object| result == false }
+          result = send(method) if result != false && respond_to_without_attributes?(method)
+          
+          result
         end
-        
-        return result
+
+        def run_callbacks(kind, options = {}, &block)
+          options.reverse_merge!(:object => self)
+          self.class.send("#{kind}_callback_chain").run(options[:object], options, &block)
+        end
+      else
+        # Rails 2.0
+        def callback_with_args(method, arg = self)
+          return true unless orm?(:activerecord)
+          notify(method)
+
+          result = nil
+          callbacks_for(method).each do |callback|
+            result = callback.call(self, arg)
+            return false if result == false
+          end
+          result
+        end
       end
 
       # Removes the thumbnails for the attachment, if it has any
